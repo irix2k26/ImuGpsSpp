@@ -6,9 +6,13 @@ Uso:
     python leer_spp.py COM5            # imprime IMU y GPS
     python leer_spp.py COM5 --csv      # además guarda datos_AAAAMMDD_HHMMSS.csv
 
-Formato de las líneas que manda el celular:
+Formatos de línea que manda el celular (se elige en la app):
+  CSV:
     IMU,ms,ax,ay,az,gx,gy,gz,mx,my,mz     (m/s2, rad/s, uT)
     GPS,ms,fix,lat,lon,alt,vel,rumbo,prec,sats   (fix=1 con posición; 0 sin fix)
+  Dewesoft (una sola línea, 17 campos numéricos, sin prefijo):
+    ax,ay,az,gx,gy,gz,mx,my,mz,fix,lat,lon,alt,vel,rumbo,prec,sats
+  NMEA: sentencias $GPGGA, $GPRMC... tal cual (se imprimen sin procesar).
 Comandos que acepta: PING (responde PONG), STOP, START.
 """
 import argparse
@@ -58,6 +62,14 @@ def main():
                         hz = n_imu / (time.time() - t0)
                         print(f"IMU  acc=({campos[2]}, {campos[3]}, {campos[4]}) "
                               f"gyro=({campos[5]}, {campos[6]}, {campos[7]})  ~{hz:.0f} Hz")
+                elif len(campos) == 17 and campos[0] not in ("IMU", "GPS"):
+                    n_imu += 1  # formato Dewesoft
+                    if n_imu % 25 == 0:
+                        hz = n_imu / (time.time() - t0)
+                        fix = "FIX" if campos[9] == "1" else "sin fix"
+                        print(f"DW   acc=({campos[0]}, {campos[1]}, {campos[2]}) "
+                              f"gyro=({campos[3]}, {campos[4]}, {campos[5]}) "
+                              f"{fix} lat={campos[10]} lon={campos[11]} sats={campos[16]}  ~{hz:.0f} Hz")
                 else:
                     print(linea)  # PONG, sentencias NMEA, etc.
         except KeyboardInterrupt:

@@ -46,6 +46,11 @@ class SppService : Service() {
     companion object {
         private const val TAG = "SppService"
         private const val NOMBRE_SERVICIO = "IMU-GPS-SPP"
+
+        // Formatos de salida (los elige la pantalla principal)
+        const val FORMATO_CSV = 0        // líneas IMU,... y GPS,... separadas
+        const val FORMATO_NMEA = 1       // solo sentencias NMEA crudas del GPS
+        const val FORMATO_DEWESOFT = 2   // una sola línea fija de 17 campos numéricos
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     }
 
@@ -64,7 +69,7 @@ class SppService : Service() {
     // Cola hacia el hilo escritor: los sensores nunca se bloquean esperando al Bluetooth.
     private val cola = LinkedBlockingQueue<String>(2000)
 
-    private var modoNmea = false
+    private var formato = FORMATO_CSV
     private var hz = 50
 
     // Últimos valores de los sensores (se leen y escriben en el mismo hilo "h")
@@ -82,7 +87,11 @@ class SppService : Service() {
     override fun onCreate() {
         super.onCreate()
         val prefs = getSharedPreferences("cfg", Context.MODE_PRIVATE)
-        modoNmea = prefs.getBoolean("nmea", false)
+        formato = when {
+            prefs.contains("formato") -> prefs.getInt("formato", FORMATO_CSV)
+            prefs.getBoolean("nmea", false) -> FORMATO_NMEA   // compatibilidad con la versión 1
+            else -> FORMATO_CSV
+        }
         hz = prefs.getInt("hz", 50).coerceIn(1, 200)
 
         iniciarNotificacion()
@@ -106,7 +115,7 @@ class SppService : Service() {
         sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
         iniciarGps()
-        if (!modoNmea) iniciarImu()
+        if (formato != FORMATO_NMEA) iniciarImu()
         thread(name = "spp-servidor") { bucleServidor() }
     }
 
@@ -243,19 +252,38 @@ class SppService : Service() {
     private val tickImu = object : Runnable {
         override fun run() {
             if (!corriendo) return
-            enviar(
-                String.format(
-                    Locale.US,
-                    "IMU,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f\r\n",
-                    System.currentTimeMillis(),
-                    acc[0], acc[1], acc[2],
-                    gyr[0], gyr[1], gyr[2],
-                    mag[0], mag[1], mag[2]
-                )
-            )
+            enviar(if (formato == FORMATO_DEWESOFT) lineaDewesoft() else lineaImu())
             proxImu += 1000L / hz
             h.postAtTime(this, proxImu)
         }
+    }
+
+    private fun lineaImu(): String = String.format(
+        Locale.US,
+        "IMU,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f\r\n",
+        System.currentTimeMillis(),
+        acc[0], acc[1], acc[2],
+        gyr[0], gyr[1], gyr[2],
+        mag[0], mag[1], mag[2]
+    )
+
+    // Formato Dewesoft: 17 campos numéricos, sin prefijo y sin campos vacíos.
+    // ax,ay,az, gx,gy,gz, mx,my,mz, fix, lat,lon,alt, vel,rumbo,prec, sats
+    // Sin fix: fix=0 y se mantiene la última posición conocida (0 si nunca hubo).
+    private fun lineaDewesoft(): String {
+        val l = ultima
+        val fix = if (hayFix(l)) 1 else 0
+        return String.format(
+            Locale.US,
+            "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%d,%.7f,%.7f,%.1f,%.2f,%.1f,%.1f,%d\r\n",
+            acc[0], acc[1], acc[2],
+            gyr[0], gyr[1], gyr[2],
+            mag[0], mag[1], mag[2],
+            fix,
+            l?.latitude ?: 0.0, l?.longitude ?: 0.0, l?.altitude ?: 0.0,
+            l?.speed ?: 0f, l?.bearing ?: 0f, l?.accuracy ?: 0f,
+            nsatUsados
+        )
     }
 
     private fun iniciarImu() {
@@ -302,14 +330,16 @@ class SppService : Service() {
         enviar(mensaje.trim() + "\r\n")
     }
 
-    // Una vez por segundo: línea GPS (modo CSV) y estado para la pantalla
+    private fun hayFix(l: Location?): Boolean =
+        l != null && (SystemClock.elapsedRealtimeNanos() - l.elapsedRealtimeNanos) < 5_000_000_000L
+
+    // Una vez por segundo: línea GPS (formato CSV) y estado para la pantalla
     private val tickGps = object : Runnable {
         override fun run() {
             if (!corriendo) return
             val ahora = System.currentTimeMillis()
             val l = ultima
-            val conFix = l != null &&
-                    (SystemClock.elapsedRealtimeNanos() - l.elapsedRealtimeNanos) < 5_000_000_000L
+            val conFix = hayFix(l)
 
             Estado.gps = if (!lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 "GPS apagado: actívalo en Ajustes > Ubicación"
@@ -320,7 +350,7 @@ class SppService : Service() {
                 "sin fix (sats usados %d / visibles %d). Sal al aire libre.".format(nsatUsados, nsatVisibles)
             }
 
-            if (!modoNmea) {
+            if (formato == FORMATO_CSV) {
                 if (conFix && l != null) {
                     enviar(
                         String.format(
@@ -342,7 +372,7 @@ class SppService : Service() {
         try {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, locListener, hilo.looper)
             lm.registerGnssStatusCallback(gnssCb, h)
-            if (modoNmea) lm.addNmeaListener(nmeaListener, h)
+            if (formato == FORMATO_NMEA) lm.addNmeaListener(nmeaListener, h)
         } catch (e: SecurityException) {
             Estado.gps = "sin permiso de ubicación"
             Log.e(TAG, "GPS sin permiso", e)

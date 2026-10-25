@@ -10,14 +10,22 @@ No usa servicios de Google (GPS por `LocationManager`).
 3. Con la app en "Esperando a la laptop (SPP)": *Más opciones de Bluetooth > Puertos COM > Agregar > Saliente*, elige el celular y anota el COM (p. ej. COM5).
 4. `pip install pyserial` y luego `python tools/leer_spp.py COM5` (o `--csv` para guardar).
 
-## Formato de datos (CSV, una línea por muestra, terminada en CRLF)
+## Formatos de salida (se elige en la app y se aplica al reiniciar el servicio)
+Todas las líneas terminan en CRLF. Comandos desde la laptop: `PING` (responde `PONG`), `STOP`, `START`.
+
+**CSV** (por defecto): líneas separadas, con prefijo.
+
     IMU,ms,ax,ay,az,gx,gy,gz,mx,my,mz        m/s², rad/s, µT, a la frecuencia elegida
     GPS,ms,fix,lat,lon,alt,vel,rumbo,prec,sats   1 Hz; fix=0 deja los campos vacíos
-`ms` es la hora del celular en milisegundos Unix. Comandos desde la laptop: `PING`, `STOP`, `START`.
 
-## Modo NMEA
-Marca la casilla y reinicia el servicio: solo se envían las sentencias NMEA crudas del GPS
-(`$GPGGA`, `$GPRMC`...), compatibles con Google Earth, u-center, gpsd, etc.
+**Dewesoft**: una sola línea fija a la frecuencia de la IMU, 17 campos numéricos, sin prefijo ni campos vacíos.
+Sin fix manda `fix=0` y mantiene la última posición conocida (0 si nunca hubo). Pensado para el plugin Serial Com.
+
+    ax,ay,az,gx,gy,gz,mx,my,mz,fix,lat,lon,alt,vel,rumbo,prec,sats
+
+**NMEA**: solo sentencias NMEA crudas del GPS (`$GPGGA`, `$GPRMC`...), compatibles con Google Earth, u-center, gpsd, etc.
+
+`ms` es la hora del celular en milisegundos Unix.
 
 ## Notas
 - El GPS necesita cielo despejado; en interiores no habrá fix. El primer fix puede tardar varios minutos.

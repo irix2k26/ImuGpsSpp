@@ -15,7 +15,6 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -29,7 +28,7 @@ import androidx.core.content.ContextCompat
 class MainActivity : AppCompatActivity() {
 
     private lateinit var txtEstado: TextView
-    private lateinit var chkNmea: CheckBox
+    private lateinit var grupoFormato: RadioGroup
     private lateinit var grupoHz: RadioGroup
 
     private val ui = Handler(Looper.getMainLooper())
@@ -82,11 +81,29 @@ class MainActivity : AppCompatActivity() {
         }
         raiz.addView(grupoHz)
 
-        chkNmea = CheckBox(this).apply {
-            text = "Modo NMEA (solo GPS, para Google Earth / u-center / gpsd)"
-            isChecked = prefs.getBoolean("nmea", false)
+        raiz.addView(TextView(this).apply {
+            text = "Formato de salida:"
+            setPadding(0, margen, 0, 0)
+        })
+        val formatoGuardado = when {
+            prefs.contains("formato") -> prefs.getInt("formato", SppService.FORMATO_CSV)
+            prefs.getBoolean("nmea", false) -> SppService.FORMATO_NMEA
+            else -> SppService.FORMATO_CSV
         }
-        raiz.addView(chkNmea)
+        grupoFormato = RadioGroup(this).apply { orientation = LinearLayout.VERTICAL }
+        listOf(
+            SppService.FORMATO_CSV to "CSV: líneas IMU y GPS separadas",
+            SppService.FORMATO_DEWESOFT to "Dewesoft: una línea fija de 17 campos",
+            SppService.FORMATO_NMEA to "NMEA: solo GPS (Google Earth / u-center / gpsd)"
+        ).forEach { (valor, texto) ->
+            grupoFormato.addView(RadioButton(this).apply {
+                text = texto
+                id = View.generateViewId()
+                tag = valor
+                isChecked = (valor == formatoGuardado)
+            })
+        }
+        raiz.addView(grupoFormato)
 
         raiz.addView(Button(this).apply {
             text = "Iniciar / reiniciar servicio"
@@ -147,9 +164,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun iniciarServicio() {
         val hz = grupoHz.findViewById<RadioButton>(grupoHz.checkedRadioButtonId)?.tag as? Int ?: 50
+        val formato = grupoFormato.findViewById<RadioButton>(grupoFormato.checkedRadioButtonId)
+            ?.tag as? Int ?: SppService.FORMATO_CSV
         getSharedPreferences("cfg", Context.MODE_PRIVATE).edit()
             .putInt("hz", hz)
-            .putBoolean("nmea", chkNmea.isChecked)
+            .putInt("formato", formato)
             .apply()
 
         val intent = Intent(this, SppService::class.java)
